@@ -2,28 +2,42 @@
 BaseDice.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
 
-contract BaseDice {
-    address public immutable owner;
-    uint256 public treasuryBalance;
+/**
+ * @title BaseDiceRoller - Fun Dice Roller (Pure Entertainment Edition)
+ * @notice This is a completely original, pure entertainment on-chain dice rolling game made exclusively for you.
+ *         Players can roll a 6-sided die for free anytime. No betting, no payouts, no gambling.
+ *         Each roll shows a fun message based on the result. Great for casual fun and sharing rolls with friends.
+ */
 
+contract BaseDiceRoller {
+    address public owner;
+
+    // Player stats
+    mapping(address => uint256) public totalRolls;
+    mapping(address => uint256) public bestRoll;        // Highest number rolled by player
+    mapping(address => uint256) public lastRollTime;
+
+    // Fun messages for each dice result (1-6)
+    string[6] private messages = [
+        "Too bad! Better luck next time!",
+        "Rolled a 1... Not the best, but keep going!",
+        "Rolled a 2. Keep practicing!",
+        "Rolled a 3. Pretty average!",
+        "Rolled a 4. Nice! Small win vibes!",
+        "Rolled a 5. You're on fire today!"
+    ];
+
+    // Events
     event DiceRolled(
         address indexed player,
         uint8 roll,
-        uint256 bet,
-        uint256 payout,
         string message,
+        uint256 totalRollsByPlayer,
         uint256 timestamp
     );
-
-    string[6] private messages = [
-        unicode"太可惜了，下次再来！",
-        unicode"1 点... 运气一般～",
-        unicode"2 点，继续努力！",
-        unicode"3 点，中规中矩",
-        unicode"4 点，小赢一把！",
-        unicode"5 点，欧气满满！"
-    ];
 
     constructor() {
         owner = msg.sender;
@@ -34,48 +48,104 @@ contract BaseDice {
         _;
     }
 
-    function roll() external payable {
-        require(msg.value == 0.001 ether, "Must pay exactly 0.001 ETH to roll");
+    /**
+     * @notice Roll the dice for free (pure fun, no payment required)
+     */
+    function rollDice() external {
+        // Optional cooldown to prevent spam (can be removed if you want unlimited rolls)
+        // require(block.timestamp >= lastRollTime[msg.sender] + 30 seconds, "Please wait a bit between rolls");
 
-        // 伪随机生成 1~6 点
-        uint256 random = uint256(keccak256(abi.encodePacked(
-            block.prevrandao,
-            msg.sender,
-            block.timestamp,
-            block.number
-        ))) % 6 + 1;
+        lastRollTime[msg.sender] = block.timestamp;
+        totalRolls[msg.sender] += 1;
+
+        // On-chain pseudo-random roll (1 to 6)
+        uint256 random = uint256(
+            keccak256(
+                abi.encodePacked(
+                    block.prevrandao,
+                    msg.sender,
+                    block.timestamp,
+                    block.number,
+                    totalRolls[msg.sender]
+                )
+            )
+        ) % 6 + 1;
 
         uint8 rollResult = uint8(random);
-        uint256 payout = 0;
 
-        if (rollResult == 6) {
-            payout = 0.005 ether;           // 5倍
-        } else if (rollResult >= 4) {
-            payout = 0.002 ether;           // 2倍
-        } else {
-            treasuryBalance += msg.value;   // 输了进入金库
+        // Update best roll
+        if (rollResult > bestRoll[msg.sender]) {
+            bestRoll[msg.sender] = rollResult;
         }
 
         string memory message = messages[rollResult - 1];
 
-        if (payout > 0) {
-            payable(msg.sender).transfer(payout);
+        emit DiceRolled(
+            msg.sender,
+            rollResult,
+            message,
+            totalRolls[msg.sender],
+            block.timestamp
+        );
+    }
+
+    /**
+     * @notice View your own dice statistics
+     */
+    function getMyStats() external view returns (
+        uint256 totalRollsCount,
+        uint256 highestRoll,
+        uint256 lastRollTimestamp
+    ) {
+        return (
+            totalRolls[msg.sender],
+            bestRoll[msg.sender],
+            lastRollTime[msg.sender]
+        );
+    }
+
+    /**
+     * @notice View any player's dice statistics
+     */
+    function getPlayerStats(address player) external view returns (
+        uint256 totalRollsCount,
+        uint256 highestRoll,
+        uint256 lastRollTimestamp
+    ) {
+        return (
+            totalRolls[player],
+            bestRoll[player],
+            lastRollTime[player]
+        );
+    }
+
+    /**
+     * @notice Get a fun message for a specific roll result (for frontend use)
+     */
+    function getMessageForRoll(uint8 roll) external pure returns (string memory) {
+        require(roll >= 1 && roll <= 6, "Roll must be between 1 and 6");
+        return messages[roll - 1];
+    }
+
+    /**
+     * @notice Owner can reset a player's stats (for testing or cleanup)
+     */
+    function resetPlayerStats(address player) external onlyOwner {
+        totalRolls[player] = 0;
+        bestRoll[player] = 0;
+        lastRollTime[player] = 0;
+    }
+
+    /**
+     * @notice Withdraw any accidentally sent ETH
+     */
+    function withdraw() external onlyOwner {
+        uint256 balance = address(this).balance;
+        if (balance > 0) {
+            payable(owner).transfer(balance);
         }
-
-        emit DiceRolled(msg.sender, rollResult, msg.value, payout, message, block.timestamp);
     }
 
-    function getTreasury() external view returns (uint256) {
-        return treasuryBalance;
-    }
-
-    function withdrawTreasury() external onlyOwner {
-        uint256 amount = treasuryBalance;
-        treasuryBalance = 0;
-        payable(owner).transfer(amount);
-    }
-
-    function getContractInfo() external pure returns (string memory) {
-        return "BaseDice - Pay 0.001 ETH to roll a 6-sided die and win up to 5x!";
-    }
+    // Receive ETH (in case someone sends by mistake)
+    receive() external payable {}
 }
